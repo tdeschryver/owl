@@ -1,6 +1,4 @@
 .vs/
 
 bin/
-
-obj/debug
-obj/release
+obj/
