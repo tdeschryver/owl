@@ -17,8 +17,11 @@ open System.Text
 open System.Threading
 open System.IO
 open Newtonsoft.Json
+open FSharp.Data
 
+let endpointsFile = "endpoints.txt"
 let refreshRate = 1000*60*10
+let eventstore = new Event<byte[]>()
 let logger = Targets.create Verbose [||]
 let serverConfig = 
   let port = getBuildParamOrDefault "port" "8083" |> Sockets.Port.Parse
@@ -27,9 +30,12 @@ let serverConfig =
       logger = logger }
 
 let mutable endpoints = List.empty<string>
-let eventstore = new Event<byte[]>()
+
 let readEndpoints () =
-  endpoints <- "endpoints.txt" |> File.ReadLines |> Seq.toList
+  endpoints <- endpointsFile
+    |> File.ReadLines 
+    |> Seq.filter (String.IsNullOrWhiteSpace >> not ) 
+    |> Seq.toList
 
 let checkEndpoint (url: string) =
   async {
@@ -58,6 +64,16 @@ let refresh () =
     |> JsonConvert.SerializeObject
     |> Encoding.ASCII.GetBytes
     |> eventstore.Trigger
+
+
+// FileSystemWatcher ?
+let watchEndpoints =
+  async {
+    !! endpointsFile |> WatchChanges (fun changes -> 
+        readEndpoints()  
+        refresh()
+    ) |> ignore    
+  }
 
 let rec job f = 
   async {
@@ -119,14 +135,14 @@ let api =
 let listening, server = startWebServerAsync serverConfig api
 
 readEndpoints()
+watchEndpoints |> Async.Start 
 server |> Async.Start
 job <| refresh |> Async.Start
 
 let rec read (msg) =
   match msg with
   | "q" -> ignore()
-  | "refresh" -> 
-    readEndpoints() 
+  | "r" -> 
     refresh()
     read("")
   | _ -> Console.ReadLine() |> read

@@ -6,8 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.fs" />
-    <Content Include="endpoints.txt">		   
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>		
+    <Content Include="endpoints.txt">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
   <ItemGroup>
