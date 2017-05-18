@@ -1,4 +1,3 @@
-open Fake
 open Suave
 open Suave.Successful
 open Suave.Operators
@@ -23,8 +22,8 @@ let endpointsFile = "endpoints.txt"
 let refreshRate = 1000*60*10
 let eventstore = new Event<byte[]>()
 let logger = Targets.create Verbose [||]
-let serverConfig = 
-  let port = getBuildParamOrDefault "port" "8083" |> Sockets.Port.Parse
+let serverConfig =
+  let port = "8083" |> Sockets.Port.Parse
   { defaultConfig with
       bindings = [ HttpBinding.create HTTP IPAddress.Loopback port ]
       logger = logger }
@@ -32,15 +31,15 @@ let serverConfig =
 let mutable endpoints = List.empty<string>
 
 let readEndpoints () =
-  endpoints <- endpointsFile
-    |> File.ReadLines 
-    |> Seq.filter (String.IsNullOrWhiteSpace >> not ) 
+  endpointsFile
+    |> File.ReadLines
+    |> Seq.filter (String.IsNullOrWhiteSpace >> not )
     |> Seq.toList
 
 let checkEndpoint (url: string) =
   async {
     try
-      let req = WebRequest.Create(url) 
+      let req = WebRequest.Create(url)
       use! rsp = req.AsyncGetResponse()
       return (url, (rsp :?> HttpWebResponse).StatusCode = HttpStatusCode.OK)
     with
@@ -51,13 +50,13 @@ let refresh () =
   endpoints
     |> Seq.map checkEndpoint
     |> Async.Parallel
-    |> Async.RunSynchronously  
-    |> Seq.map (fun (url, success) -> 
+    |> Async.RunSynchronously
+    |> Seq.map (fun (url, success) ->
       match success with
-      | false -> 
+      | false ->
         logger.log LogLevel.Warn (Message.eventX url) |> ignore
         (url, success)
-      | true -> 
+      | true ->
         (url, success)
       )
     |> dict
@@ -67,32 +66,33 @@ let refresh () =
 
 
 // FileSystemWatcher ?
-let watchEndpoints =
-  async {
-    !! endpointsFile |> WatchChanges (fun changes -> 
-        readEndpoints()  
-        refresh()
-    ) |> ignore    
-  }
+let watchEndpoints () =
+  let newEndpoints = readEndpoints()
+  match newEndpoints = endpoints with
+    | true -> ignore()
+    | false ->
+      endpoints <- newEndpoints
+      refresh()
+      ignore()
 
-let rec job f = 
+let rec job f interval skipFirst =
   async {
-    f()
-    do! Async.Sleep(refreshRate)
-    return! job(f)
+    if not skipFirst then f()
+    do! Async.Sleep(interval)
+    return! job f interval false
   }
 
 let ws (webSocket : WebSocket) =
   //TODO: MailboxProcessor?
-  let notifyLoop = 
-    async { 
-      while true do 
+  let notifyLoop =
+    async {
+      while true do
         let! msg = Async.AwaitEvent eventstore.Publish
         let response = msg |> ByteSegment
         let! _ = webSocket.send Text response true
         return ()
     }
-  
+
   let cts = new CancellationTokenSource()
   Async.Start(notifyLoop, cts.Token)
 
@@ -111,7 +111,7 @@ let ws (webSocket : WebSocket) =
         | Ping, _, _ ->
           let emptyResponse = [||] |> ByteSegment
           do! webSocket.send Pong emptyResponse true
-        | Close, _, _ -> 
+        | Close, _, _ ->
           let emptyResponse = [||] |> ByteSegment
           do! webSocket.send Close emptyResponse true
           loop := false
@@ -120,9 +120,9 @@ let ws (webSocket : WebSocket) =
 
 let api =
   choose
-    [ 
+    [
       GET >=> choose
-        [ 
+        [
           path "/ws" >=> handShake ws
           path "/api/refresh" >=> request (fun r ->
             refresh()
@@ -134,15 +134,14 @@ let api =
 
 let listening, server = startWebServerAsync serverConfig api
 
-readEndpoints()
-watchEndpoints |> Async.Start 
 server |> Async.Start
-job <| refresh |> Async.Start
+job watchEndpoints 1000 false |> Async.Start
+job refresh refreshRate true |> Async.Start
 
 let rec read (msg) =
   match msg with
   | "q" -> ignore()
-  | "r" -> 
+  | "r" ->
     refresh()
     read("")
   | _ -> Console.ReadLine() |> read
