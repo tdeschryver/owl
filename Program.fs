@@ -18,6 +18,8 @@ open System.IO
 open Newtonsoft.Json
 open FSharp.Data
 
+let logDirectory = "./logs"
+let historyFile = sprintf "%s/history.csv" logDirectory
 let endpointsFile = "endpoints.txt"
 let refreshRate = 1000*60*10
 let eventstore = new Event<byte[]>()
@@ -46,6 +48,32 @@ let checkEndpoint (url: string) =
       :? WebException -> return (url, false)
   }
 
+let createLogDirectory =
+  Directory.CreateDirectory(logDirectory) |> ignore
+  if not <| File.Exists(historyFile) then
+    File.AppendAllLines(historyFile, ["Timestamp;Endoint"])
+
+let logToConsole url =
+  logger.log LogLevel.Warn (Message.eventX url) |> ignore
+  url
+
+let logToDailyFile (url) = 
+  let filename = sprintf "%s/%s.txt" logDirectory (DateTime.Today.ToString("yyyy-MM-dd"))
+  let filecontents = sprintf "[%s] %s" (DateTime.Now.ToString("HH:mm")) url
+  File.AppendAllLines(filename, [filecontents])
+  url
+
+let logToCSV (url) =   
+  let filecontents = sprintf "%s;%s" (DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")) url
+  File.AppendAllLines(historyFile, [filecontents])
+  url
+
+let log (url) = 
+  url 
+    |> logToConsole
+    |> logToDailyFile
+    |> logToCSV
+
 let refresh () =
   endpoints
     |> Seq.map checkEndpoint
@@ -54,7 +82,7 @@ let refresh () =
     |> Seq.map (fun (url, success) ->
       match success with
       | false ->
-        logger.log LogLevel.Warn (Message.eventX url) |> ignore
+        log url |> ignore
         (url, success)
       | true ->
         (url, success)
@@ -134,6 +162,7 @@ let api =
 
 let listening, server = startWebServerAsync serverConfig api
 
+createLogDirectory
 server |> Async.Start
 job watchEndpoints 1000 false |> Async.Start
 job refresh refreshRate true |> Async.Start
