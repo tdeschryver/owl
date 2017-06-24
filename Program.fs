@@ -75,23 +75,25 @@ let log (url) =
     |> logToCSV
 
 let refresh () =
-  endpoints
-    |> Seq.map checkEndpoint
-    |> Async.Parallel
-    |> Async.RunSynchronously
-    |> Seq.map (fun (url, success) ->
-      match success with
-      | false ->
-        log url |> ignore
-        (url, success)
-      | true ->
-        (url, success)
-      )
-    |> dict
-    |> JsonConvert.SerializeObject
-    |> Encoding.ASCII.GetBytes
-    |> eventstore.Trigger
-
+  try
+    endpoints
+      |> Seq.map checkEndpoint
+      |> Async.Parallel
+      |> Async.RunSynchronously
+      |> Seq.map (fun (url, success) ->
+        match success with
+        | false ->
+          log url |> ignore
+          (url, success)
+        | true ->
+          (url, success)
+        )
+      |> dict
+      |> JsonConvert.SerializeObject
+      |> Encoding.ASCII.GetBytes
+      |> eventstore.Trigger
+  with
+    | e -> logger.log LogLevel.Error (Message.eventX e.Message) |> ignore
 
 // FileSystemWatcher ?
 let watchEndpoints () =
