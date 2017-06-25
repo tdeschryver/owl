@@ -15,6 +15,7 @@ open System.Net
 open System.Text
 open System.Threading
 open System.IO
+open System.Xml
 open Newtonsoft.Json
 open FSharp.Data
 
@@ -38,12 +39,31 @@ let readEndpoints () =
     |> Seq.filter (String.IsNullOrWhiteSpace >> not )
     |> Seq.toList
 
+let checkXml(response: HttpWebResponse) =
+  (response.ContentType = "text/xml" || response.ContentType = "application/xml") &&
+  (
+    try
+      use data = response.GetResponseStream()
+      use reader = new StreamReader(data)
+      reader.ReadToEnd()
+        |> XmlDocument().LoadXml
+      true
+    with
+      | _ -> false
+  )
+
 let checkEndpoint (url: string) =
   async {
     try
       let req = WebRequest.Create(url)
-      use! rsp = req.AsyncGetResponse()
-      return (url, (rsp :?> HttpWebResponse).StatusCode = HttpStatusCode.OK)
+      use! asyncResponse = req.AsyncGetResponse()
+      let response = (asyncResponse :?> HttpWebResponse)
+
+      let tester() = match url with
+                     | url when url.EndsWith(".wsdl") -> checkXml(response)
+                     | _ ->  true
+
+      return (url, response.StatusCode = HttpStatusCode.OK && tester())
     with
       :? WebException -> return (url, false)
   }
