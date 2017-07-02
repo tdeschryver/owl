@@ -22,16 +22,18 @@ open FSharp.Data
 let logDirectory = "./logs"
 let historyFile = sprintf "%s/history.csv" logDirectory
 let endpointsFile = "endpoints.txt"
-let refreshRate = 1000*60*10
+let refreshRate = 1000*60
+let requestTimeOut = 2000
+
+let mutable endpoints = List.empty<string>
 let eventstore = new Event<byte[]>()
+
 let logger = Targets.create Verbose [||]
 let serverConfig =
   let port = "8083" |> Sockets.Port.Parse
   { defaultConfig with
       bindings = [ HttpBinding.create HTTP IPAddress.Loopback port ]
       logger = logger }
-
-let mutable endpoints = List.empty<string>
 
 let readEndpoints () =
   endpointsFile
@@ -52,20 +54,33 @@ let checkXml(response: HttpWebResponse) =
       | _ -> false
   )
 
+type Request = Request of WebRequest * AsyncReplyChannel<WebResponse>
+let requestAgent =
+  MailboxProcessor.Start <| fun inbox -> async {
+    while true do
+      let! (Request (req, port)) = inbox.Receive()
+      async {
+        try        
+          let! resp = req.AsyncGetResponse()
+          port.Reply resp
+        with
+          | e -> ignore()
+      } |> Async.Start
+  }
+
 let checkEndpoint (url: string) =
   async {
     try
       let req = WebRequest.Create(url)
-      use! asyncResponse = req.AsyncGetResponse()
+      use! asyncResponse = requestAgent.PostAndAsyncReply((fun chan -> Request(req, chan)), requestTimeOut)
       let response = (asyncResponse :?> HttpWebResponse)
-
       let tester() = match url with
                      | url when url.EndsWith(".wsdl") -> checkXml(response)
                      | _ ->  true
 
       return (url, response.StatusCode = HttpStatusCode.OK && tester())
     with
-      :? WebException -> return (url, false)
+      | :? TimeoutException -> return (url, false)
   }
 
 let createLogDirectory =
@@ -133,7 +148,6 @@ let rec job f interval skipFirst =
   }
 
 let ws (webSocket : WebSocket) =
-  //TODO: MailboxProcessor?
   let notifyLoop =
     async {
       while true do
@@ -148,11 +162,11 @@ let ws (webSocket : WebSocket) =
 
   fun (context: HttpContext) ->
     socket {
-      let loop = ref true
+      let mutable loop = true
 
-      while !loop do
-        let! m = webSocket.read()
-        match m with
+      while loop do
+        let! msg = webSocket.read()
+        match msg with
         | Text, data, true ->
           let str = UTF8.toString data
           match str with
@@ -164,7 +178,7 @@ let ws (webSocket : WebSocket) =
         | Close, _, _ ->
           let emptyResponse = [||] |> ByteSegment
           do! webSocket.send Close emptyResponse true
-          loop := false
+          loop <- false
         | _ -> ()
     }
 
