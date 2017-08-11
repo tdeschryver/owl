@@ -60,8 +60,8 @@ let requestAgent =
     while true do
       let! (Request (req, port)) = inbox.Receive()
       async {
-        try        
-          let! resp = req.AsyncGetResponse()
+        try
+          let! resp = req.GetResponseAsync()
           port.Reply resp
         with
           | e -> ignore()
@@ -92,19 +92,19 @@ let logToConsole url =
   logger.log LogLevel.Warn (Message.eventX url) |> ignore
   url
 
-let logToDailyFile (url) = 
+let logToDailyFile (url) =
   let filename = sprintf "%s/%s.txt" logDirectory (DateTime.Today.ToString("yyyy-MM-dd"))
   let filecontents = sprintf "[%s] %s" (DateTime.Now.ToString("HH:mm")) url
   File.AppendAllLines(filename, [filecontents])
   url
 
-let logToCSV (url) =   
+let logToCSV (url) =
   let filecontents = sprintf "%s;%s" (DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")) url
   File.AppendAllLines(historyFile, [filecontents])
   url
 
-let log (url) = 
-  url 
+let log (url) =
+  url
     |> logToConsole
     |> logToDailyFile
     |> logToCSV
